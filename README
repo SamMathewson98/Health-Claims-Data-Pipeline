@@ -1,0 +1,92 @@
+# Healthcare Claims Analytics Pipeline (Databricks + Spark)
+
+## Overview
+This project implements an end-to-end healthcare claims data pipeline using **Apache Spark on Databricks**. The pipeline ingests sample healthcare claims data, performs multi-stage enrichment and scrubbing, and produces curated “gold” outputs suitable for downstream analytics or data warehouse ingestion.
+
+The pipeline is orchestrated as a **multi-task Databricks Job**, with explicit task dependencies and dynamic handoff of artifacts between tasks. Final outputs are exported as **Parquet files using Unity Catalog Volumes**, enabling secure file-based data exchange even in environments where public DBFS access is disabled.
+
+This project was built as a learning and portfolio exercise, but it closely mirrors real-world production patterns used in healthcare analytics and data engineering teams.
+
+---
+
+## Key Features
+- Multi-stage Spark ETL pipeline (raw → enriched → scrubbed)
+- Healthcare claims–specific enrichment (procedures, diagnoses, providers)
+- Deduplication, normalization, and schema alignment
+- Orchestrated Databricks Job with task dependencies
+- Dynamic inter-task communication using `dbutils.jobs.taskValues`
+- Secure file export using **Unity Catalog Volumes**
+- Output Parquet files suitable for Snowflake / warehouse bulk load
+- Designed to run in restricted environments (no public DBFS)
+
+---
+
+## Pipeline Architecture
+
+### Stage 0 – Base Claims Assembly
+- Joins enrollment and claims data
+- Classifies claims as:
+  - matched (within enrollment window)
+  - ineligible (outside enrollment window)
+  - unmatched (no enrollment record)
+- Produces a consolidated base dataset
+
+### Stage 1 – Enrichment
+- Enriches claims with:
+  - procedure data
+  - diagnosis data
+  - provider data
+- Handles overlapping columns safely
+- Preserves a clean, analytics-friendly schema
+
+### Stage 2 – Scrubbing & Normalization
+- Rounds monetary fields
+- Cleans column names
+- Removes or flattens complex data types
+- Deduplicates at the appropriate grain
+
+### Stage 3 – Analytics-Ready Gold Table
+- Produces a curated Delta table (`stage3`)
+- Optimized for downstream reporting or export
+
+### Task 2 – Parquet Export
+- Runs after Stage 3 completes
+- Dynamically retrieves the output table name from Task 1
+- Exports the dataset as Parquet into a **Unity Catalog Volume**
+- Enables secure download or downstream consumption
+
+---
+
+## Technologies Used
+- **Databricks**
+- **Apache Spark (PySpark)**
+- **Delta Lake**
+- **Databricks Jobs / Workflows**
+- **Unity Catalog & Volumes**
+- **Parquet**
+
+---
+
+## Job Orchestration
+The pipeline is implemented as a **multi-task Databricks Job**:
+
+### Task 1: `Health_Claims_Pipeline`
+- Executes all ETL stages
+- Writes the final gold table
+- Publishes the output table name via:
+  ```python
+  dbutils.jobs.taskValues.set(key="output_table", value="workspace.default.stage3")
+
+Task 2: Export_Stage3_Parquet
+
+Dependent on Task 1
+- Reads the output table name dynamically using:
+dbutils.jobs.taskValues.get(taskKey="Health_Claims_Pipeline", key="output_table")
+- Writes a Parquet export to a Unity Catalog Volume
+
+Output
+- Delta Tables
+  - stage0, stage1, stage2, stage3
+- Parquet Export
+  - Written to: /Volumes/<catalog>/<schema>/claim_pipeline/
+  - One folder per run, containing a single Parquet file
